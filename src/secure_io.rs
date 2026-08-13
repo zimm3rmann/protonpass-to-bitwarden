@@ -98,12 +98,7 @@ where
     let destination = PreparedDestination::new(destination, force)?;
     let mut temporary = create_private_temporary(&destination.parent)?;
     let temporary_path = temporary.path().to_path_buf();
-    let temporary_identity = required_file_identity(
-        &temporary
-            .as_file()
-            .metadata()
-            .map_err(|_| SecureIoError::PathInspectionFailed)?,
-    )?;
+    let temporary_identity = required_handle_identity(temporary.as_file())?;
 
     destination.verify_parent()?;
     destination.verify_endpoint()?;
@@ -215,7 +210,9 @@ fn verify_persisted(
 fn cleanup_temporary_alias(path: &Path, identity: FileIdentity) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
-            if !safe_regular_metadata(&metadata) || required_file_identity(&metadata)? != identity {
+            if !safe_regular_metadata(&metadata)
+                || required_path_identity(path, &metadata)? != identity
+            {
                 return Err(SecureIoError::PersistFailed);
             }
             fs::remove_file(path).map_err(|_| SecureIoError::PersistFailed)?;
@@ -233,7 +230,7 @@ fn remove_if_identity(path: &Path, identity: FileIdentity) {
     if fs::symlink_metadata(path)
         .ok()
         .filter(safe_regular_metadata)
-        .and_then(|metadata| file_identity(&metadata))
+        .and_then(|metadata| path_identity(path, &metadata))
         == Some(identity)
     {
         let _ = fs::remove_file(path);
@@ -312,7 +309,7 @@ impl PreparedDestination {
             if !safe_directory_metadata(&metadata) {
                 return Err(SecureIoError::UnsafeDestination);
             }
-            let parent_identity = required_file_identity(&metadata)?;
+            let parent_identity = required_path_identity(&parent, &metadata)?;
             Ok(Self {
                 parent,
                 path,
@@ -329,7 +326,7 @@ impl PreparedDestination {
             }
             (EndpointState::Existing(expected), Ok(metadata))
                 if safe_regular_metadata(&metadata)
-                    && required_file_identity(&metadata)? == expected =>
+                    && required_path_identity(&self.path, &metadata)? == expected =>
             {
                 Ok(())
             }
@@ -354,7 +351,7 @@ impl PreparedDestination {
         let metadata =
             fs::symlink_metadata(&self.parent).map_err(|_| SecureIoError::PathInspectionFailed)?;
         if safe_directory_metadata(&metadata)
-            && required_file_identity(&metadata)? == self.parent_identity
+            && required_path_identity(&self.parent, &metadata)? == self.parent_identity
         {
             Ok(())
         } else {
@@ -384,7 +381,9 @@ fn inspect_endpoint(path: &Path, force: bool) -> Result<EndpointState> {
             if !force {
                 return Err(SecureIoError::DestinationExists);
             }
-            Ok(EndpointState::Existing(required_file_identity(&metadata)?))
+            Ok(EndpointState::Existing(required_path_identity(
+                path, &metadata,
+            )?))
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(EndpointState::Missing),
         Err(_) => Err(SecureIoError::PathInspectionFailed),
@@ -428,7 +427,7 @@ impl ComparablePath {
                     fs::canonicalize(path).map_err(|_| SecureIoError::PathInspectionFailed)?;
                 Ok(Self {
                     resolved,
-                    identity: file_identity(&metadata),
+                    identity: path_identity(path, &metadata),
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound && endpoint.is_none() => {
@@ -592,13 +591,18 @@ struct FileIdentity {
 }
 
 #[cfg(unix)]
-fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
+fn path_identity(_: &Path, metadata: &Metadata) -> Option<FileIdentity> {
     use std::os::unix::fs::MetadataExt;
 
     Some(FileIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
     })
+}
+
+#[cfg(unix)]
+fn handle_identity(file: &File) -> Option<FileIdentity> {
+    path_identity(Path::new(""), &file.metadata().ok()?)
 }
 
 #[cfg(windows)]
@@ -609,13 +613,74 @@ struct FileIdentity {
 }
 
 #[cfg(windows)]
-fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
-    use std::os::windows::fs::MetadataExt;
+fn path_identity(path: &Path, metadata: &Metadata) -> Option<FileIdentity> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    };
 
-    Some(FileIdentity {
-        volume: metadata.volume_serial_number()?,
-        index: metadata.file_index()?,
-    })
+    let information = windows_path_information(path)?;
+    let attributes = information.dwFileAttributes;
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || (attributes & FILE_ATTRIBUTE_DIRECTORY != 0) != metadata.file_type().is_dir()
+    {
+        return None;
+    }
+    Some(windows_information_identity(&information))
+}
+
+#[cfg(windows)]
+fn handle_identity(file: &File) -> Option<FileIdentity> {
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    let information = windows_handle_information(file)?;
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return None;
+    }
+    Some(windows_information_identity(&information))
+}
+
+#[cfg(windows)]
+fn windows_path_information(
+    path: &Path,
+) -> Option<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    windows_handle_information(&file)
+}
+
+#[cfg(windows)]
+fn windows_handle_information(
+    file: &File,
+) -> Option<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    let result = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) };
+    (result != 0).then_some(information)
+}
+
+#[cfg(windows)]
+fn windows_information_identity(
+    information: &windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION,
+) -> FileIdentity {
+    FileIdentity {
+        volume: information.dwVolumeSerialNumber,
+        index: (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -623,24 +688,29 @@ fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
 struct FileIdentity;
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity(_: &Metadata) -> Option<FileIdentity> {
+fn path_identity(_: &Path, _: &Metadata) -> Option<FileIdentity> {
     None
 }
 
-fn required_file_identity(metadata: &Metadata) -> Result<FileIdentity> {
-    file_identity(metadata).ok_or(SecureIoError::PathInspectionFailed)
+#[cfg(not(any(unix, windows)))]
+fn handle_identity(_: &File) -> Option<FileIdentity> {
+    None
+}
+
+fn required_path_identity(path: &Path, metadata: &Metadata) -> Result<FileIdentity> {
+    path_identity(path, metadata).ok_or(SecureIoError::PathInspectionFailed)
+}
+
+fn required_handle_identity(file: &File) -> Result<FileIdentity> {
+    handle_identity(file).ok_or(SecureIoError::PathInspectionFailed)
 }
 
 fn verify_path_identity(path: &Path, file: &File, expected: FileIdentity) -> Result<()> {
     let path_metadata =
         fs::symlink_metadata(path).map_err(|_| SecureIoError::PathInspectionFailed)?;
     if !safe_regular_metadata(&path_metadata)
-        || required_file_identity(&path_metadata)? != expected
-        || required_file_identity(
-            &file
-                .metadata()
-                .map_err(|_| SecureIoError::PathInspectionFailed)?,
-        )? != expected
+        || required_path_identity(path, &path_metadata)? != expected
+        || required_handle_identity(file)? != expected
     {
         return Err(SecureIoError::UnsafeDestination);
     }
@@ -656,11 +726,11 @@ fn validate_parent(path: &Path, file: &File) -> Result<FileIdentity> {
     let file_metadata = file
         .metadata()
         .map_err(|_| SecureIoError::PathInspectionFailed)?;
-    let identity = required_file_identity(&file_metadata)?;
+    let identity = required_handle_identity(file)?;
     if path_metadata.file_type().is_symlink()
         || !path_metadata.file_type().is_dir()
         || !file_metadata.is_dir()
-        || required_file_identity(&path_metadata)? != identity
+        || required_path_identity(path, &path_metadata)? != identity
         || file_metadata.uid() != effective_user_id()
     {
         return Err(SecureIoError::UnsafeDestination);
@@ -698,14 +768,9 @@ fn verify_single_link(file: &File) -> Result<()> {
 
 #[cfg(windows)]
 fn verify_single_link(file: &File) -> Result<()> {
-    use std::os::windows::fs::MetadataExt;
-
-    if file
-        .metadata()
-        .map_err(|_| SecureIoError::PathInspectionFailed)?
-        .number_of_links()
-        == Some(1)
-    {
+    let information =
+        windows_handle_information(file).ok_or(SecureIoError::PathInspectionFailed)?;
+    if information.nNumberOfLinks == 1 {
         Ok(())
     } else {
         Err(SecureIoError::UnsafeDestination)
@@ -896,10 +961,11 @@ mod tests {
     use serde::Serializer;
     use std::cell::Cell;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use tempfile::{TempDir, tempdir as system_tempdir};
+    use tempfile::TempDir;
 
     fn tempdir() -> io::Result<TempDir> {
-        let directory = system_tempdir()?;
+        let temporary_root = fs::canonicalize(std::env::temp_dir())?;
+        let directory = Builder::new().tempdir_in(temporary_root)?;
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))?;
         Ok(directory)
     }
@@ -1135,7 +1201,7 @@ mod tests {
         fs::write(&temporary, b"synthetic").unwrap();
         fs::hard_link(&temporary, &destination).unwrap();
         let file = File::open(&destination).unwrap();
-        let identity = required_file_identity(&file.metadata().unwrap()).unwrap();
+        let identity = required_handle_identity(&file).unwrap();
 
         cleanup_temporary_alias(&temporary, identity).unwrap();
         verify_single_link(&file).unwrap();
