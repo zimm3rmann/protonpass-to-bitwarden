@@ -4,7 +4,7 @@
 
 A repository-wide Codex Security static scan reviewed the Rust CLI, JavaScript validator, dependency manifests, tests, workflows, README, and security policy. The pre-remediation scan ID was `3e31592a-cad4-4007-925b-b4ac96e608f1`; its snapshot digest was `codex-security-snapshot/v1:sha256:a985953e2858f746fc4b89f231b3def121b389fcc7535b0f33934a2e00ab696f`.
 
-Final remediated deliverable content/path digest: `deliverable-file-set/v1:sha256:1f97087e33ad36d6d62d40fc8ccfa05fe8fc1dfd17c2dbcd619860d2b99494fb`. This is a non-self-referential digest of every repository file except Git metadata, build/release output, and this audit record. It covers sorted relative paths and file contents, but not filesystem mode metadata. The exact GNU-coreutils command was:
+Final remediated deliverable content/path digest: `deliverable-file-set/v1:sha256:85ad3d3951830fa96bebbe135a147defa6bb10185a9aee4ed75188912db74fb4`. This is a non-self-referential digest of every repository file except Git metadata, build/release output, and this audit record. It covers sorted relative paths and file contents, but not filesystem mode metadata. The exact GNU-coreutils command was:
 
 ```sh
 find . -type f -not -path './.git/*' -not -path './target/*' -not -path './dist/*' -not -path './aidocs/security-audit-2026-08-13.md' -print0 |
