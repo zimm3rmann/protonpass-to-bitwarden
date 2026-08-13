@@ -4,7 +4,7 @@ use std::process::{Command as ProcessCommand, Output};
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::{Value, json};
-use tempfile::tempdir;
+use tempfile::Builder;
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
@@ -17,7 +17,8 @@ const URL_SENTINEL: &str = "synthetic-url-must-not-be-copied.invalid";
 const PROTON_WEBCLIENTS_PASSKEY_CONTENT: &str = "gqFj3AGxzIXMo2tlecyGzKNrdHnMgsyhdMymYXNzaWduzKFjzKNFQzLMo2tpZMyQzKNhbGfMgsyhdMymYXNzaWduzKFjzKVFUzI1Nsyka29wc8yQzKNiaXbMkMyjcGFyzJTMksyCzKF0zKNpbnTMoWPM/8yCzKF0zKNpbnTMoWPMgcylaW5uZXLM3AAQAQAAAAAAAAAAAAAAAAAAAMySzILMoXTMo2ludMyhY8z+zILMoXTMpWJ5dGVzzKFjzNwAIMzMzM/MzMygKMzMzN9rzMzMrszMzPFPzMzM1ArMzMyOdszMzPxfQMzMzILMzMzdzMzMqVjMzMyyzMzM8kAAzMzM6nXMzMzjFczMzLUazMzM51AfzJLMgsyhdMyjaW50zKFjzP3MgsyhdMylYnl0ZXPMoWPM3AAgMXFgzMzM2MzMzLEeZkIAzMzMykVuKVk1zMzMxi/MzMyoaMzMzI/MzMzxzMzM0szMzLHMzMz+zMzM2czMzLIczMzMqMzMzJ/MzMzACF7MksyCzKF0zKNpbnTMoWPM/MyCzKF0zKVieXRlc8yhY8zcACAyF8zMzLfMzMyYzMzM/gjMzMy7HzAnJczMzN4veAQIY8zMzO7MzMyedszMzNNXZ2UeCMzMzJ/MzMzYzMzMwDA0XMyjY2lkzNwAEGEXcszMzIo+zMzM0czMzLLMzMypzMzMnMzMzPBBH8zMzK3MzMyOzMzMrszMzNzMo3JpZMyrd2ViYXV0aG4uaW/Mo3VoZMzcACtqRVdtTE5HVndtYXozdk15YVd6SW16ejFFRWxOUDVvUXhWSnlld3hubjNFzKNjbnTMwKF2AQ==";
 
 fn private_tempdir() -> tempfile::TempDir {
-    let directory = tempdir().unwrap();
+    let temporary_root = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let directory = Builder::new().tempdir_in(temporary_root).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
