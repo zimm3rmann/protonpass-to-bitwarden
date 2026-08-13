@@ -1,0 +1,179 @@
+name: Build release artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+          - windows-2022
+    steps:
+      - name: Check out source (actions/checkout v4.2.2)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install Node.js 22 (actions/setup-node v4.4.0)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Check independent validator syntax
+        run: node --check scripts/validate-bitwarden-output.mjs
+      - name: Test
+        run: cargo test --locked --all
+      - name: Validate a generated nonzero-passkey export
+        run: cargo test --locked --test cli independent_validator_checks_generated_nonzero_passkey -- --exact
+
+  minimum-rust:
+    name: Verify minimum Rust 1.88.0
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source (actions/checkout v4.2.2)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install declared minimum Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Check all targets with the declared minimum Rust
+        run: cargo +1.88.0 check --locked --all-targets --all-features
+
+  dependency-audit:
+    name: Verify dependency policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source (actions/checkout v4.2.2)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Install cargo-audit 0.22.2
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: Audit locked dependencies
+        run: cargo audit --file Cargo.lock
+      - name: Prove the ignored RSA package is unreachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsa_tree="$(cargo tree --locked --target all -i rsa -e normal)"
+          test -z "$rsa_tree"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs:
+      - verify
+      - minimum-rust
+      - dependency-audit
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: protonpass-to-bitwarden-linux-x86_64
+            executable: protonpass-to-bitwarden
+          - os: macos-14
+            target: x86_64-apple-darwin
+            artifact: protonpass-to-bitwarden-macos-x86_64
+            executable: protonpass-to-bitwarden
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: protonpass-to-bitwarden-macos-aarch64
+            executable: protonpass-to-bitwarden
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            artifact: protonpass-to-bitwarden-windows-x86_64
+            executable: protonpass-to-bitwarden.exe
+    steps:
+      - name: Check out source (actions/checkout v4.2.2)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned Rust toolchain and target
+        run: rustup target add ${{ matrix.target }}
+      - name: Set deterministic source timestamp
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Build first copy
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage first copy
+        shell: bash
+        run: |
+          mkdir -p dist/scripts dist/tests dist/aidocs
+          cp "target/${{ matrix.target }}/release/${{ matrix.executable }}" "dist/${{ matrix.executable }}"
+          cp README.md SECURITY.md CONTRIBUTING.md CHANGELOG.md LICENSE Cargo.toml Cargo.lock rust-toolchain.toml dist/
+          cp scripts/validate-bitwarden-output.mjs scripts/validate-bitwarden-importer.sh dist/scripts/
+          cp tests/bitwarden-json-importer.bridge.spec.ts dist/tests/
+          cp aidocs/security-audit-2026-08-13.md dist/aidocs/
+      - name: Rebuild from a clean workspace target directory
+        shell: bash
+        run: |
+          cargo clean
+          cargo build --release --locked --target "${{ matrix.target }}"
+      - name: Verify reproducible binary
+        shell: bash
+        run: cmp -s "dist/${{ matrix.executable }}" "target/${{ matrix.target }}/release/${{ matrix.executable }}"
+      - name: Record build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "target=${{ matrix.target }}"
+            echo "source_date_epoch=$SOURCE_DATE_EPOCH"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "runner_image=${ImageOS:-unknown}"
+            echo "[rustc]"
+            rustc --version --verbose
+            echo "[cargo]"
+            cargo --version --verbose
+          } > dist/BUILDINFO.txt
+      - name: Generate SHA-256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            "${{ matrix.executable }}"
+            README.md
+            SECURITY.md
+            CONTRIBUTING.md
+            CHANGELOG.md
+            LICENSE
+            Cargo.toml
+            Cargo.lock
+            rust-toolchain.toml
+            scripts/validate-bitwarden-output.mjs
+            scripts/validate-bitwarden-importer.sh
+            tests/bitwarden-json-importer.bridge.spec.ts
+            aidocs/security-audit-2026-08-13.md
+            BUILDINFO.txt
+          )
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "${files[@]}") > dist/SHA256SUMS
+          else
+            (cd dist && shasum -a 256 "${files[@]}") > dist/SHA256SUMS
+          fi
+      - name: Package artifact with file permissions
+        shell: bash
+        run: tar -C dist -czf "${{ matrix.artifact }}.tar.gz" .
+      - name: Upload workflow artifact (actions/upload-artifact v4.6.2)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible converter problem without sharing vault data
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach a real Proton export, generated Bitwarden JSON, passkey blob, private key, TOTP seed, password, note, card record, recovery code, or unredacted report. Use aggregate counts and synthetic data only.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I have not included real vault data or secrets in this report.
+          required: true
+        - label: Any reproduction fixture uses synthetic data and fake domains such as `example.test`.
+          required: true
+  - type: dropdown
+    id: command
+    attributes:
+      label: Command
+      options:
+        - inspect
+        - convert
+        - convert-passkeys
+        - build or test
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Converter version or commit
+      placeholder: 0.1.0 or full commit SHA
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Ubuntu 24.04, macOS 15, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the expected and observed behavior. Include only fixed CLI messages and aggregate counts.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Provide minimal steps or a synthetic fixture. Do not include a real export or unredacted output.
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks run
+      placeholder: cargo test --locked --all

@@ -1,0 +1,32 @@
+/target/
+/dist/
+/private/
+/vaults/
+/exports/
+/ProtonPass/
+/ProtonPass.zip
+/Proton Pass/
+/data.json
+/bitwarden-import.json
+/migration-report.json
+ProtonPass*.zip
+Proton Pass*.zip
+proton-pass*.zip
+bitwarden_export*.json
+bitwarden-import*.json
+bitwarden-passkeys-only*.json
+migration-report*.json
+passkey-migration-report*.json
+*.gpg
+*.pgp
+*.profraw
+*.tmp
+*.swp
+*~
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

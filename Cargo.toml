@@ -1,0 +1,56 @@
+[package]
+name = "protonpass-to-bitwarden"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Offline Proton Pass to Bitwarden JSON converter with passkey support"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/zimm3rmann/protonpass-to-bitwarden"
+keywords = ["bitwarden", "proton-pass", "passkeys", "webauthn", "migration"]
+categories = ["command-line-utilities", "cryptography"]
+publish = false
+
+[lib]
+name = "protonpass_to_bitwarden"
+path = "src/lib.rs"
+
+[[bin]]
+name = "protonpass-to-bitwarden"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+ed25519-dalek = { version = "2.2", default-features = false, features = ["zeroize"] }
+num-bigint-dig = { version = "0.8", default-features = false, features = ["prime", "std", "u64_digit", "zeroize"] }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "pkcs8", "std"] }
+rmp-serde = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+ssh-key = { version = "0.6", default-features = false, features = ["std"] }
+tempfile = "3.20"
+thiserror = "2.0"
+time = { version = "0.3", features = ["formatting"] }
+uuid = { version = "1.16", features = ["v5"] }
+zeroize = { version = "1.8", features = ["derive"] }
+zip = { version = "8.0", default-features = false, features = ["deflate-flate2"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+proptest = "1.7"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"
