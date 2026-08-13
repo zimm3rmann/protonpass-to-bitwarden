@@ -4,7 +4,7 @@
 
 A repository-wide Codex Security static scan reviewed the Rust CLI, JavaScript validator, dependency manifests, tests, workflows, README, and security policy. The pre-remediation scan ID was `3e31592a-cad4-4007-925b-b4ac96e608f1`; its snapshot digest was `codex-security-snapshot/v1:sha256:a985953e2858f746fc4b89f231b3def121b389fcc7535b0f33934a2e00ab696f`.
 
-Final remediated deliverable content/path digest: `deliverable-file-set/v1:sha256:85113cbc56d702120cafd69916b22bebd056a571a7ab8cb6a1ecf43a9b317380`. This is a non-self-referential digest of every repository file except Git metadata, build/release output, and this audit record. It covers sorted relative paths and file contents, but not filesystem mode metadata. The exact GNU-coreutils command was:
+Final remediated deliverable content/path digest: `deliverable-file-set/v1:sha256:1f97087e33ad36d6d62d40fc8ccfa05fe8fc1dfd17c2dbcd619860d2b99494fb`. This is a non-self-referential digest of every repository file except Git metadata, build/release output, and this audit record. It covers sorted relative paths and file contents, but not filesystem mode metadata. The exact GNU-coreutils command was:
 
 ```sh
 find . -type f -not -path './.git/*' -not -path './target/*' -not -path './dist/*' -not -path './aidocs/security-audit-2026-08-13.md' -print0 |
@@ -28,7 +28,7 @@ The scan reported eleven findings: eight medium and three low. They were remedia
 | Known Proton schemas silently ignored unknown members | Security-relevant and known item structures reject unknown fields; explicitly modeled future item kinds receive an unsupported ledger outcome. |
 | Folder and split-login output amplification | Aggregate projected-output and folder-name budgets are enforced before conversion; folder construction is incremental. |
 | Duplicate JSON vault keys were collapsed | The vault-map deserializer rejects duplicate keys before insertion. |
-| Windows privacy verification was a no-op | Output is created with a protected owner/System/Administrators DACL before the first secret byte and reverified before and after persistence. Hosted Windows execution is still pending. |
+| Windows privacy verification was a no-op | Output is created with a protected owner/System/Administrators DACL before the first secret byte and reverified before and after persistence. Hosted Windows CI exercises private temporary-file creation, pre-write DACL verification, and post-persistence reverification on the runner's local filesystem; privileged and nonstandard-filesystem behavior remains outside the claim. |
 | Duplicate passkey credential identities were accepted | Exact and conflicting duplicates are detected across the export, rejected, and assigned explicit report outcomes. |
 | No-clobber persistence could leave a temporary hard link | Temporary and persisted identities and link counts are checked; a surviving alias is removed only after identity verification. |
 | Output authorization was exposed to mutable path races | Parent and endpoint identities are captured and rechecked, symlink/reparse traversal is rejected, and persisted identity is verified. A hostile same-user process able to mutate filesystem state remains outside the trusted-host assumption. |
@@ -67,11 +67,11 @@ The remediation was checked locally with formatting, warning-free Clippy, unit/p
 
 In addition, the actual `BitwardenJsonImporter` from pinned Bitwarden clients commit `2be53da5b7ec6f7608f2fc28a6f63d70d89ec53f` was run under Node.js 22.22.2 against converter output from the pinned Proton synthetic ZIP. It passed with 7 ciphers, 3 folders, and 1 exact FIDO credential view. `tests/bitwarden-json-importer.bridge.spec.ts` and `scripts/validate-bitwarden-importer.sh` record the repeatable bridge. This is parser-level compatibility evidence only. Separately, one real passkey-only migration was reported successful on August 13, 2026, but its exact environment and separate allowed-credential/discoverable outcomes were not recorded.
 
-## Final local verification matrix
+## Final verification matrix
 
 The final measured file set above was checked on Ubuntu 24.04.4 LTS, Linux 7.0.0-28-generic x86-64, using Rust/Cargo 1.96.0, the declared Rust/Cargo 1.88.0 minimum, Node.js 22.22.2, and cargo-audit 0.22.2.
 
-| Check | Final local result |
+| Check | Final result |
 |---|---|
 | `cargo fmt --all -- --check` | Passed. |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | Passed with no warnings. |
@@ -84,14 +84,15 @@ The final measured file set above was checked on Ubuntu 24.04.4 LTS, Linux 7.0.0
 | Pinned Proton WebClients ZIP | Strict conversion exited 0 with 7/7 items, 1/1 passkey, 3 folders, 7 output items, and zero strict failures. The output and report were both mode `0600`; their SHA-256 values were `f7eb8d0d2c94f05589d892aeea3a9f8dcc492a5a72ecd6a4bd45adf753e271cb` and `ad4e26940d8dc0983a84c1965f9ca8497fdd0fdcab597b9d04c2cd56ee5a6630`. |
 | Independent passkey validator | Passed PKCS#8 import and ECDSA sign/verify for exactly one credential. |
 | Pinned Bitwarden importer bridge | Passed with 7 full-vault ciphers, 3 folders, and one exact FIDO credential view; the parameterized passkey-only carrier checks also passed. |
+| GitHub Actions CI | [Run `31749867742`](https://github.com/zimm3rmann/protonpass-to-bitwarden/actions/runs/31749867742) passed at commit `ebb76ce2da1b717b648dcd02dd1eb3d404c3c7b5` on Ubuntu 24.04, macOS 14, and Windows Server 2022. Platform jobs ran formatting, warning-free Clippy, the Rust test suite, Node validator syntax, and generated nonzero-passkey validation; the minimum-Rust and dependency-audit jobs also passed. |
 
-The reproducible local verification matrix above used only public synthetic fixtures. Hosted Windows/macOS execution and a release-workflow run were not performed. The later user-reported field migration is recorded separately and is not presented as part of that controlled matrix.
+The local verification rows above used only public synthetic fixtures, as did the hosted CI run. The manual release workflow was not run. The later user-reported field migration is recorded separately and is not presented as part of that controlled matrix.
 
 The following remain deliberately unclaimed:
 
 - a versioned, independently repeatable live Bitwarden import and authentication matrix;
 - separately recorded discoverable and allowed-credential browser ceremonies after import;
-- hosted Windows CI execution and real Windows ACL behavior;
+- administrator/backup-privilege and non-NTFS/network-share Windows ACL behavior;
 - a completed run of the new release workflow and independent cross-environment binary reproducibility;
 - secure erasure, perfect zeroization, or resistance to a privileged/local-compromised host;
 - atomic commitment of the vault and report as a pair.
